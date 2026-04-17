@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import dns from "dns";
 import { fileURLToPath } from "url";
 import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
@@ -14,6 +15,9 @@ import { ServerSmarteyeEngine } from "./src/lib/server-engine.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Force IPv4 to avoid connection issues with exchanges on some networks
+dns.setDefaultResultOrder("ipv4first");
 
 // Telegram Bot Setup
 const DEFAULT_BOT_TOKEN = '8277095257:AAG_5Xw_pLGQNqOH27guqfuNQ3fJV9OCbn0';
@@ -1441,3 +1445,4 @@ async function startServer() {
 }
 
 startServer();
+
