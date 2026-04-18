@@ -1,4 +1,5 @@
 import pg from 'pg';
+import dns from 'dns';
 
 const { Pool } = pg;
 
@@ -44,8 +45,14 @@ export function getPool(): pg.Pool {
         },
         max: 20,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
+        connectionTimeoutMillis: 10000, // Increased timeout
       });
+      
+      // Force IPv4 lookup for this pool
+      // This is a more robust way than setting global dns order
+      (pool as any).options.lookup = (hostname: string, options: any, callback: any) => {
+        dns.lookup(hostname, { ...options, family: 4 }, callback);
+      };
       
       // Verification log
       pool.on('error', (err) => {
@@ -234,3 +241,4 @@ export async function initializeDatabase() {
     console.warn('schema.sql not found, skipping initialization.');
   }
 }
+
