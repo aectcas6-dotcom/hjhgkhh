@@ -428,37 +428,58 @@ async function startServer() {
   app.post("/api/auth/register", express.json(), async (req, res) => {
     const { email, password, username, referrerId } = req.body;
     try {
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
+
       const existing = await query("SELECT * FROM users WHERE email = $1", [email]);
       if (existing.rows.length > 0) {
         return res.status(400).json({ error: "User already exists" });
       }
 
+      // Handle empty string or invalid referrerId from frontend
+      let refId = null;
+      if (referrerId && referrerId !== "" && referrerId !== "null" && referrerId !== "undefined") {
+        refId = referrerId;
+      }
+
+      console.log(`[Auth] Attempting to register user: ${email}`);
+
       // WARNING: Storing passwords in plain text is highly insecure.
       // This was implemented per user request.
       const result = await query(
         "INSERT INTO users (email, password, username, referrer_id) VALUES ($1, $2, $3, $4) RETURNING id, email, username, subscription_tier, avatar_tier, premium_end_date, balance, role, referrer_id, created_at",
-        [email, password, username || email.split("@")[0], referrerId || null]
+        [email, password, username || email.split("@")[0], refId]
       );
 
       const user = result.rows[0];
+      console.log(`[Auth] User registered successfully: ${user.id}`);
 
       // If there's a referrer, create a referral record
-      if (referrerId) {
+      if (refId) {
         try {
           await query(
             "INSERT INTO referrals (referrer_id, referred_user_id, status) VALUES ($1, $2, $3) ON CONFLICT (referred_user_id) DO NOTHING",
-            [referrerId, user.id, 'unpaid']
+            [refId, user.id, 'unpaid']
           );
-        } catch (e) {
-          console.error("Failed to create referral record:", e);
+        } catch (e: any) {
+          console.error("[Auth] Failed to create referral record (non-fatal):", e.message);
         }
       }
 
       const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
       res.json({ user, token });
-    } catch (error) {
-      console.error("Registration error:", error);
-      res.status(500).json({ error: "Registration failed" });
+    } catch (error: any) {
+      console.error("[Auth] Registration error details:", {
+        message: error.message,
+        detail: error.detail,
+        code: error.code
+      });
+      res.status(500).json({ 
+        error: "Registration failed on server", 
+        details: error.message,
+        code: error.code
+      });
     }
   });
 
@@ -1445,4 +1466,5 @@ async function startServer() {
 }
 
 startServer();
+
 
