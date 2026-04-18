@@ -42,19 +42,36 @@ export function getPool(): pg.Pool {
 
     console.log('Initializing database pool...');
     try {
+      // FORCE IPV4 RESOLUTION MANUALLY - This is the ultimate fix for Render's IPv6 issues
+      let finalConnectionString = connectionString;
+      try {
+        const url = new URL(connectionString);
+        const hostname = url.hostname;
+        
+        // Only resolve if it's not already an IP
+        if (!/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(hostname) && !hostname.includes('localhost')) {
+          const { address } = await new Promise<{ address: string }>((resolve, reject) => {
+            dns.lookup(hostname, { family: 4 }, (err, addr) => {
+              if (err) reject(err);
+              else resolve({ address: addr });
+            });
+          });
+          url.hostname = address;
+          finalConnectionString = url.toString();
+          console.log(`DNS Force: Resolved ${hostname} -> ${address} (IPv4)`);
+        }
+      } catch (dnsErr) {
+        console.warn('DNS Force Resolution failed, falling back to original URL:', dnsErr);
+      }
+
       pool = new Pool({
-        connectionString,
+        connectionString: finalConnectionString,
         ssl: connectionString.includes('localhost') ? false : {
           rejectUnauthorized: false
         },
         max: 20,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 15000, // Further increased timeout
-        // Explicitly force IPv4 during DNS lookup for every connection in the pool
-        // @ts-ignore - 'lookup' is a valid option passed to the Client constructor
-        lookup: (hostname: string, options: any, callback: any) => {
-          dns.lookup(hostname, { ...options, family: 4 }, callback);
-        }
       });
       
       // Verification log
@@ -85,6 +102,9 @@ export async function initializeDatabase() {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   const schemaPath = path.join(__dirname, '../../schema.sql');
+
+  // Pre-initialize pool to catch potential connection errors early
+  getPool();
 
   if (fs.existsSync(schemaPath)) {
     console.log('Initializing database with schema...');
