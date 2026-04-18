@@ -1,6 +1,10 @@
 import pg from 'pg';
 import dns from 'dns';
 
+// Force DNS to prefer IPv4 first globally for this process
+// This is critical for Render environments that fail on IPv6 connections to databases
+dns.setDefaultResultOrder("ipv4first");
+
 const { Pool } = pg;
 
 // Use lazy initialization for the pool to avoid crashing if DATABASE_URL is missing on startup
@@ -45,14 +49,13 @@ export function getPool(): pg.Pool {
         },
         max: 20,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000, // Increased timeout
+        connectionTimeoutMillis: 15000, // Further increased timeout
+        // Explicitly force IPv4 during DNS lookup for every connection in the pool
+        // @ts-ignore - 'lookup' is a valid option passed to the Client constructor
+        lookup: (hostname: string, options: any, callback: any) => {
+          dns.lookup(hostname, { ...options, family: 4 }, callback);
+        }
       });
-      
-      // Force IPv4 lookup for this pool
-      // This is a more robust way than setting global dns order
-      (pool as any).options.lookup = (hostname: string, options: any, callback: any) => {
-        dns.lookup(hostname, { ...options, family: 4 }, callback);
-      };
       
       // Verification log
       pool.on('error', (err) => {
@@ -241,4 +244,3 @@ export async function initializeDatabase() {
     console.warn('schema.sql not found, skipping initialization.');
   }
 }
-
