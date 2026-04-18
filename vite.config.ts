@@ -30,19 +30,7 @@ export default defineConfig(({ mode }) => {
         }
       },
       build: {
-        chunkSizeWarningLimit: 2000,
-        rollupOptions: {
-          output: {
-            manualChunks(id) {
-              if (id.includes('node_modules')) {
-                if (id.includes('react')) return 'vendor-react';
-                if (id.includes('recharts') || id.includes('d3')) return 'vendor-charts';
-                if (id.includes('lucide') || id.includes('motion')) return 'vendor-ui';
-                return 'vendor';
-              }
-            }
-          }
-        }
+        chunkSizeWarningLimit: 2000
       }
     };
 });
