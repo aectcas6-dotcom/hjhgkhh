@@ -267,6 +267,8 @@ bot.on('successful_payment', async (msg) => {
   bot.sendMessage(chatId, '✨ Оплата прошла успешно! Если подписка не обновилась в течение нескольких минут, пожалуйста, обратитесь в поддержку.');
 });
 
+let lastServerError: any = null;
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -276,7 +278,6 @@ async function startServer() {
     await initializeDatabase();
   } catch (error) {
     console.error("Failed to initialize database:", error);
-    // Don't exit, maybe it's already initialized or connection is just slow
   }
 
   // Ensure public/logos directory exists
@@ -285,29 +286,37 @@ async function startServer() {
     fs.mkdirSync(logosDir, { recursive: true });
   }
 
+  // Global error tracker
+  app.use((req, res, next) => {
+    const oldResJson = res.json;
+    res.json = function(data) {
+      if (res.statusCode >= 400) {
+        lastServerError = {
+          url: req.url,
+          method: req.method,
+          body: req.body,
+          error: data,
+          timestamp: new Date().toISOString()
+        };
+      }
+      return oldResJson.apply(res, arguments as any);
+    };
+    next();
+  });
+
   // Logo Proxy Route
   app.get("/api/logos/:symbol", async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
-    
-    // 1. Check if logo exists locally (try svg then png)
     const extensions = ["svg", "png", "jpg", "jpeg"];
     for (const ext of extensions) {
       const filePath = path.join(logosDir, `${symbol}.${ext}`);
-      if (fs.existsSync(filePath)) {
-        return res.sendFile(filePath);
-      }
+      if (fs.existsSync(filePath)) return res.sendFile(filePath);
     }
-
-    // 2. Try to fetch and save (JIT)
     const sources = [
       { url: `https://bin.bnbstatic.com/static/assets/logos/${symbol}.png`, ext: "png" },
       { url: `https://assets.coincap.io/assets/icons/${symbol.toLowerCase()}@2x.png`, ext: "png" },
-      { url: `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${symbol.toLowerCase()}.png`, ext: "png" },
-      { url: `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/${symbol}/logo.png`, ext: "png" },
-      { url: `https://static.okx.com/cdn/oksupport/asset/currency/icon/${symbol.toLowerCase()}.png`, ext: "png" },
-      { url: `https://www.gate.io/images/coin_icon/64/${symbol.toLowerCase()}.png`, ext: "png" }
+      { url: `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${symbol.toLowerCase()}.png`, ext: "png" }
     ];
-
     for (const source of sources) {
       try {
         const response = await axios.get(source.url, { responseType: "arraybuffer", timeout: 3000 });
@@ -316,50 +325,72 @@ async function startServer() {
           fs.writeFileSync(savePath, Buffer.from(response.data));
           return res.sendFile(savePath);
         }
-      } catch (error) {
-        // Continue to next source
-      }
+      } catch (e) {}
     }
-
-    // 3. Fallback to UI Avatars
     res.redirect(`https://ui-avatars.com/api/?name=${symbol}&background=1a1a1a&color=fff&bold=true&font-size=0.33`);
   });
 
-  // Database Routes
+  // API routes
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", time: new Date().toISOString() });
+  });
+
   app.get("/api/db/status", async (req, res) => {
     try {
       await query("SELECT 1");
       res.json({ status: "connected" });
     } catch (error) {
-      console.error("Database status check failed:", error);
       res.status(500).json({ status: "error", message: error instanceof Error ? error.message : String(error) });
     }
   });
 
-  app.get("/api/db/debug", async (req, res) => {
+  app.get("/api/last-error", (req, res) => {
+    res.json(lastServerError || { message: "No errors recorded yet" });
+  });
+
+  // Database Debug Route (Enhanced)
+  app.get("/api/db-debug", async (req, res) => {
+    const debugInfo: any = {
+      timestamp: new Date().toISOString(),
+      env: {
+        has_url: !!process.env.DATABASE_URL,
+        url_length: process.env.DATABASE_URL?.length || 0,
+        node_env: process.env.NODE_ENV
+      }
+    };
+
     try {
       const pool = getPool();
       const connectionString = process.env.DATABASE_URL;
       
       if (!connectionString) {
-        return res.status(500).json({ error: "DATABASE_URL is missing in environment variables" });
+        return res.status(500).json({ ...debugInfo, error: "DATABASE_URL is missing" });
       }
+
+      debugInfo.pool_initialized = true;
 
       const client = await pool.connect();
       try {
         const result = await client.query("SELECT CURRENT_TIMESTAMP as time, current_database() as db, current_user as user, version()");
+        
+        // Also check if users table exists
+        const tableCheck = await client.query("SELECT count(*) FROM information_schema.tables WHERE table_name = 'users'");
+        
         client.release();
+        
         res.json({ 
+          ...debugInfo,
           status: "connected", 
           db_info: result.rows[0],
+          users_table_exists: parseInt(tableCheck.rows[0].count) > 0,
           connection_string_masked: connectionString.replace(/:([^@]+)@/, ':****@')
         });
       } catch (queryErr: any) {
         client.release();
-        res.status(500).json({ status: "query_failed", message: queryErr.message, code: queryErr.code });
+        res.status(500).json({ ...debugInfo, status: "query_failed", message: queryErr.message, code: queryErr.code });
       }
     } catch (connErr: any) {
-      res.status(500).json({ status: "connection_failed", message: connErr.message, code: connErr.code });
+      res.status(500).json({ ...debugInfo, status: "connection_failed", message: connErr.message, code: connErr.code });
     }
   });
 
@@ -1493,5 +1524,3 @@ async function startServer() {
 }
 
 startServer();
-
-
