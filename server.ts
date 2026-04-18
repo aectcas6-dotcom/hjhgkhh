@@ -9,7 +9,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
 import jwt from "jsonwebtoken";
 import TelegramBot from 'node-telegram-bot-api';
-import { query, initializeDatabase } from "./src/lib/db.ts";
+import { query, initializeDatabase, getPool } from "./src/lib/db.ts";
 import { MarketType, ExchangeConfig, SYMBOLS, getConfigsForMarket } from "./models/index.ts";
 import { ServerSmarteyeEngine } from "./src/lib/server-engine.ts";
 
@@ -333,6 +333,33 @@ async function startServer() {
     } catch (error) {
       console.error("Database status check failed:", error);
       res.status(500).json({ status: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.get("/api/db/debug", async (req, res) => {
+    try {
+      const pool = getPool();
+      const connectionString = process.env.DATABASE_URL;
+      
+      if (!connectionString) {
+        return res.status(500).json({ error: "DATABASE_URL is missing in environment variables" });
+      }
+
+      const client = await pool.connect();
+      try {
+        const result = await client.query("SELECT CURRENT_TIMESTAMP as time, current_database() as db, current_user as user, version()");
+        client.release();
+        res.json({ 
+          status: "connected", 
+          db_info: result.rows[0],
+          connection_string_masked: connectionString.replace(/:([^@]+)@/, ':****@')
+        });
+      } catch (queryErr: any) {
+        client.release();
+        res.status(500).json({ status: "query_failed", message: queryErr.message, code: queryErr.code });
+      }
+    } catch (connErr: any) {
+      res.status(500).json({ status: "connection_failed", message: connErr.message, code: connErr.code });
     }
   });
 
